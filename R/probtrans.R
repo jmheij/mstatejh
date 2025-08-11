@@ -16,6 +16,9 @@
 #' \code{direction}=\code{"fixedhorizon"})
 #' @param direction One of \code{"forward"} (default) or \code{"fixedhorizon"},
 #' indicating whether prediction is forward or for a fixed horizon
+#' @param method_pt A character string specifying whether to us product of (I=da)
+#' (\code{"prodlim"}) or product of matrix exponential of dA (\code{"exp"}); for
+#' backward compatibility default is \code{"prodlim"}
 #' @param method A character string specifying the type of variances to be
 #' computed (so only needed if either \code{variance} or \code{covariance} is
 #' \code{TRUE}). Possible values are \code{"aalen"} or \code{"greenwood"}
@@ -84,13 +87,29 @@
 #' pt <- probtrans(HvH,predt=0)
 #' # predictions from state 1
 #' pt[[1]]
+#' # New data, this time to make dA > 1
+#' newdata <- data.frame(trans = 1:3,
+#'                       x1.1 = c(0, 0, 0), x2.2 = c(0, 3, 0),
+#'                       strata = 1:3)
+#' HvH <- msfit(cx, newdata, trans=tmat)
+#' # Call probtrans with default method_pt
+#' pt <- probtrans(HvH, predt=0)
+#' # Predictions from state 1
+#' pt[[1]] # negative pstate1 and pstate2 at t = 8, 9
+#' # Call probtrans with method_pt = "exp"
+#' pt <- probtrans(HvH, method_pt = "exp", predt=0)
+#' # Predictions from state 1
+#' pt[[1]] # positive pstate1 and pstate2 everywhere
+
 #' 
 #' @export 
-`probtrans` <- function(object,predt,direction=c("forward","fixedhorizon"),
-                method=c("aalen","greenwood"),variance=TRUE,covariance=FALSE)
+`probtrans` <- function(object, predt, direction = c("forward", "fixedhorizon"),
+                        method_pt = c("prodlim", "exp"), method = c("aalen", "greenwood"),
+                        variance = TRUE, covariance = FALSE)
 {
     if (!inherits(object, "msfit"))
         stop("'object' must be a 'msfit' object")
+    method_pt <- match.arg(method_pt)
     method <- match.arg(method)
     direction <- match.arg(direction)
     trans <- object$trans
@@ -118,6 +137,18 @@
     TT <- length(untimes)
     S <- nrow(trans)
 
+    # No variances yet for matrix exponentials
+    if (covariance & method_pt == "exp")
+    {
+      warning("no covariances calculated for method_pt='exp'")
+      covariance <- FALSE
+    }
+    if (variance & method_pt == "exp")
+    {
+      warning("no variances calculated for method_pt='exp'")
+      variance <- FALSE
+    }
+    
     if (covariance) variance <- TRUE # if covariance=TRUE and variance=FALSE, variance is overruled
     if (direction=="forward") {
         if (variance==TRUE) res <- array(0,c(TT+1,2*S+1,S)) # 2*S+1 for time, probs (S), se (S)
@@ -165,7 +196,7 @@
       }
     }
     if (variance) {
-        varP <- matrix(0,S^2,S^2)
+      varP <- matrix(0,S^2,S^2)
         if (direction=="forward") {
             varAnew <- array(0,c(S,S,S,S))
             if (predt !=0) {
@@ -208,16 +239,20 @@
         Haztt <- stackhaz[stackhaz$time==tt,]
         lHaztt <- nrow(Haztt)
         # build S x S matrix IplusdA
+        dA <- matrix(0, S, S)
         IplusdA <- diag(S)
         for (j in 1:lHaztt)
         {
             from <- transit$from[transit$transno==Haztt$trans[j]]
             to <- transit$to[transit$transno==Haztt$trans[j]]
+            dA[from, to] <- Haztt$dhaz[j]
+            dA[from, from] <- dA[from, from] - Haztt$dhaz[j]
             IplusdA[from, to] <- Haztt$dhaz[j]
             IplusdA[from, from] <- IplusdA[from, from] - Haztt$dhaz[j]
         }
-        if (any(diag(IplusdA)<0))
-            warning("Warning! Negative diagonal elements of (I+dA); the estimate may not be meaningful. \n")
+        if (any(diag(IplusdA)<0) & method_pt=="prodlim")
+            warning("Warning! Negative diagonal elements of (I+dA); the estimate may not be meaningful.
+                    Set argument method_pt to 'exp'\n")
         
         if (variance) {
             if (direction=="forward"){
@@ -280,7 +315,8 @@
         {
             if (direction=="forward") 
             {  
-                P <- P %*% IplusdA
+                if (method_pt == "prodlim") P <- P %*% IplusdA
+                else if (method_pt == "exp") P <- P %*% survival:::survexpm(dA)
                 if (variance) {
                     tmp1 <- kronecker(t(IplusdA),diag(S)) %*% varP %*% kronecker(IplusdA,diag(S))
                     tmp2 <- kronecker(diag(S),P) %*% vardA %*% kronecker(diag(S),t(P))
@@ -294,6 +330,8 @@
                     varP <- tmp1+tmp2
                 }
                 P <- IplusdA %*% P
+                if (method_pt == "prodlim") P <- IplusdA %*% P
+                else if (method_pt == "exp") P <- survival:::survexpm(dA) %*% P
             }
         }
         if (method=="greenwood")
@@ -305,7 +343,8 @@
                     tmp2 <- kronecker(diag(S),P) %*% vardA %*% kronecker(diag(S),t(P))
                     varP <- tmp1 + tmp2
                 }
-                P <- P %*% IplusdA
+              if (method_pt == "prodlim") P <- P %*% IplusdA
+              else if (method_pt == "exp") P <- P %*% survival:::survexpm(dA)
             }
             else {
                 if (variance) {
@@ -313,7 +352,8 @@
                     tmp2 <- kronecker(t(P), diag(S)) %*% vardA %*% kronecker(P, diag(S))
                     varP <- tmp1+tmp2
                 }
-                P <- IplusdA %*% P
+              if (method_pt == "prodlim") P <- IplusdA %*% P
+              else if (method_pt == "exp") P <- survival:::survexpm(dA) %*% P
             }
         }
         if (variance) {

@@ -9,6 +9,7 @@ probtrans(
   object,
   predt,
   direction = c("forward", "fixedhorizon"),
+  method_pt = c("prodlim", "exp"),
   method = c("aalen", "greenwood"),
   variance = TRUE,
   covariance = FALSE
@@ -27,6 +28,10 @@ either the time at which the prediction is made (if \code{direction}=
 
 \item{direction}{One of \code{"forward"} (default) or \code{"fixedhorizon"},
 indicating whether prediction is forward or for a fixed horizon}
+
+\item{method_pt}{A character string specifying whether to us product of (I=da)
+(\code{"prodlim"}) or product of matrix exponential of dA (\code{"exp"}); for
+backward compatibility default is \code{"prodlim"}}
 
 \item{method}{A character string specifying the type of variances to be
 computed (so only needed if either \code{variance} or \code{covariance} is
@@ -88,6 +93,19 @@ HvH <- msfit(cx,newdata,trans=tmat)
 pt <- probtrans(HvH,predt=0)
 # predictions from state 1
 pt[[1]]
+# New data, this time to make dA > 1
+newdata <- data.frame(trans = 1:3,
+                      x1.1 = c(0, 0, 0), x2.2 = c(0, 3, 0),
+                      strata = 1:3)
+HvH <- msfit(cx, newdata, trans=tmat)
+# Call probtrans with default method_pt
+pt <- probtrans(HvH, predt=0)
+# Predictions from state 1
+pt[[1]] # negative pstate1 and pstate2 at t = 8, 9
+# Call probtrans with method_pt = "exp"
+pt <- probtrans(HvH, method_pt = "exp", predt=0)
+# Predictions from state 1
+pt[[1]] # positive pstate1 and pstate2 everywhere
 
 }
 \references{
