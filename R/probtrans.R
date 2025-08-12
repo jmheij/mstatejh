@@ -329,7 +329,6 @@
                     tmp2 <- kronecker(t(P), IplusdA) %*% vardA %*% kronecker(P,t(IplusdA))
                     varP <- tmp1+tmp2
                 }
-                P <- IplusdA %*% P
                 if (method_pt == "prodlim") P <- IplusdA %*% P
                 else if (method_pt == "exp") P <- survival:::survexpm(dA) %*% P
             }

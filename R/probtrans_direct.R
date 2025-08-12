@@ -9,6 +9,9 @@
 #' @param predt Prediction time from which to make predictions
 #' @param direction Should predictions be made from \code{predt} into the future ("fixed"),
 #' or starting from time 0 until \code{predt} ("fixedhorizon").
+#' @param method_pt A character string specifying whether to us product of (I=da)
+#' (\code{"prodlim"}) or product of matrix exponential of dA (\code{"exp"}); for
+#' backward compatibility default is \code{"prodlim"}
 #' @param as.df Should output be returned in \code{data.frame} format. Default is FALSE.
 #' Setting this to TRUE returns exactly the same output as \code{\link[mstate:probtrans]{probtrans}}.
 #'
@@ -26,7 +29,11 @@
 #'
 #'
 
-probtrans_D <- function(int_mat, predt, direction = c("forward", "fixedhorizon"), as.df = FALSE){
+probtrans_D <- function(int_mat, predt, direction = c("forward", "fixedhorizon"),
+                        method_pt = c("prodlim", "exp"), as.df = FALSE){
+  
+  
+  method_pt <- match.arg(method_pt)
   
   
   #Get only the matrices and times relevant for our probabilities
@@ -48,6 +55,13 @@ probtrans_D <- function(int_mat, predt, direction = c("forward", "fixedhorizon")
          Transition probabilities could not be calculated.")
   }
   
+  if(method_pt == "exp"){
+    relevant_matrices_exp <- relevant_matrices
+    for(k in 1:n_matrices){
+      relevant_matrices_exp[, , k] <- relevant_matrices_exp[, , k] - diag(n_states)
+    }
+  }
+  
   #We are certain to stay in initial state at initial time point ("forward")
   #and final time point ("fixedhorizon")
   P <- diag(n_states)
@@ -64,7 +78,8 @@ probtrans_D <- function(int_mat, predt, direction = c("forward", "fixedhorizon")
     out[, 2:(n_states +1) , 1] <- P
     #For other transition times, multiply the corresponding matrices
     for(i in 1:n_matrices){
-      P <- P %*% relevant_matrices[, , i ]
+      if (method_pt == "prodlim") P <- P %*% relevant_matrices[, , i ]
+      else if (method_pt == "exp") P <- P %*% survival:::survexpm(relevant_matrices_exp[, , i ])
       out[, 2:(n_states +1) , i+1] <- P
     }  
   } else{ #Backward direction
@@ -87,7 +102,8 @@ probtrans_D <- function(int_mat, predt, direction = c("forward", "fixedhorizon")
     
     #For other transition times, multiply the corresponding matrices
     for(i in 1:n_matrices){
-      P <- relevant_matrices[, , n_matrices + 1 - i ] %*% P
+      if (method_pt == "prodlim") P <- relevant_matrices[, , n_matrices + 1 - i ] %*% P
+      else if (method_pt == "exp") P <- survival:::survexpm(relevant_matrices_exp[, , n_matrices + 1 - i ]) %*% P
       out[, 2:(n_states +1) , n_matrices + 1 - i ] <- P
     }
   }
@@ -121,6 +137,9 @@ probtrans_D <- function(int_mat, predt, direction = c("forward", "fixedhorizon")
 #' @param cutoff Cutoff for prediction times.
 #' @param direction Should predictions be made from \code{predt} into the future ("fixed") until \code{cutoff},
 #' or starting from \code{cutoff} until \code{predt} ("fixedhorizon").
+#' @param method_pt A character string specifying whether to us product of (I=da)
+#' (\code{"prodlim"}) or product of matrix exponential of dA (\code{"exp"}); for
+#' backward compatibility default is \code{"prodlim"}
 #' @param as.df Should output be returned in \code{data.frame} format. Default is FALSE.
 #' Setting this to TRUE returns exactly the same output as \code{\link[mstate:probtrans]{probtrans}}.
 #'
@@ -138,7 +157,11 @@ probtrans_D <- function(int_mat, predt, direction = c("forward", "fixedhorizon")
 #'
 #'
 
-probtrans_C <- function(int_mat, predt, cutoff, direction = c("forward", "fixedhorizon"), as.df = FALSE){
+probtrans_C <- function(int_mat, predt, cutoff, direction = c("forward", "fixedhorizon"),
+                        method_pt = c("prodlim", "exp"), as.df = FALSE){
+  
+  
+  method_pt <- match.arg(method_pt)
   
   #Only difference between probtrans_C and probtrans_D is that
   #probtrans_C has the cutoff argument, allowing to select smaller time windows
@@ -179,7 +202,8 @@ probtrans_C <- function(int_mat, predt, cutoff, direction = c("forward", "fixedh
     out[, 2:(n_states +1) , 1] <- P
     #For other transition times, multiply the corresponding matrices
     for(i in 1:n_matrices){
-      P <- P %*% relevant_matrices[, , i ]
+      if (method_pt == "prodlim") P <- P %*% relevant_matrices[, , i ]
+      else if (method_pt == "exp") P <- P %*% survival:::survexpm(relevant_matrices_exp[, , i ])
       out[, 2:(n_states +1) , i+1] <- P
     }  
   } else{ #Backward direction "fixedhorizon"
@@ -202,7 +226,8 @@ probtrans_C <- function(int_mat, predt, cutoff, direction = c("forward", "fixedh
     
     #For other transition times, multiply the corresponding matrices
     for(i in 1:n_matrices){
-      P <- relevant_matrices[, , n_matrices + 1 - i ] %*% P
+      if (method_pt == "prodlim") P <- relevant_matrices[, , n_matrices + 1 - i ] %*% P
+      else if (method_pt == "exp") P <- survival:::survexpm(relevant_matrices_exp[, , n_matrices + 1 - i ]) %*% P
       out[, 2:(n_states +1) , n_matrices + 1 - i ] <- P
     }
   }
