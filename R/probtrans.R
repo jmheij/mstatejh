@@ -103,7 +103,7 @@
 
 #' 
 #' @export 
-`probtrans` <- function(object, predt, direction = c("forward", "fixedhorizon"),
+`probtrans_fusion` <- function(object, predt, direction = c("forward", "fixedhorizon"),
                         method_pt = c("prodlim", "exp"), method = c("aalen", "greenwood"),
                         variance = TRUE, covariance = FALSE)
 {
@@ -112,6 +112,9 @@
     method_pt <- match.arg(method_pt)
     method <- match.arg(method)
     direction <- match.arg(direction)
+  	trans <- object$trans
+  	transit <- to.trans2(trans)
+  	numtrans <- nrow(transit)
     trans <- object$trans
     transit <- to.trans2(trans)
     numtrans <- nrow(transit)
@@ -126,11 +129,10 @@
       }
     }
     stackhaz <- object$Haz
-    stackvarhaz <- object$varHaz
-    for (i in 1:numtrans)
-        stackhaz$dhaz[stackhaz$trans==i] <- diff(c(0,stackhaz$Haz[stackhaz$trans==i]))
-    if (direction=="forward")
-        stackhaz <- stackhaz[stackhaz$time > predt,]
+  	stackvarhaz <- object$varHaz
+  	for (i in 1:numtrans) stackhaz$dhaz[stackhaz$trans == i] <- diff(c(0, stackhaz$Haz[stackhaz$trans == i]))
+  	if (direction == "forward") 
+  		stackhaz <- stackhaz[stackhaz$time > predt, ]
     else stackhaz <- stackhaz[stackhaz$time <= predt,]
 
     untimes <- sort(unique(stackhaz$time))
@@ -150,12 +152,13 @@
     }
     
     if (covariance) variance <- TRUE # if covariance=TRUE and variance=FALSE, variance is overruled
-    if (direction=="forward") {
-        if (variance==TRUE) res <- array(0,c(TT+1,2*S+1,S)) # 2*S+1 for time, probs (S), se (S)
-        else res <- array(0,c(TT+1,S+1,S)) # S+1 for time, probs (S)
-        # first line (in case of forward) contains values for t=predt
-        res[1,1,] <- predt
-        for (j in 1:S) res[1, 1+j,] <- rep(c(0,1,0), c(j-1,1,S-j))
+    if (direction == "forward") {
+    		if (variance == TRUE) 
+    			res <- array(0, c(TT + 1, 2 * S + 1, S))
+    		else res <- array(0, c(TT + 1, S + 1, S))
+    		res_trans <- array(0, c(TT + 1, numtrans + 1, S))
+    		res[1, 1, ] <- res_trans[1, 1, ] <- predt
+    		for (j in 1:S) res[1, 1 + j, ] <- rep(c(0, 1, 0), c(j - 1, 1, S - j))
         if (variance) res[1,(S+2):(2*S+1),] <- 0
     }
     else {
@@ -311,12 +314,15 @@
             vardA <- matrix(vardA,S^2,S^2)
         }
         
-        if (method=="aalen")
-        {
-            if (direction=="forward") 
-            {  
-                if (method_pt == "prodlim") P <- P %*% IplusdA
-                else if (method_pt == "exp") P <- P %*% survival:::survexpm(dA)
+        if (method == "aalen") {
+    			if (direction == "forward") {
+    				if (method_pt == "prodlim") {
+    					P <- P %*% IplusdA
+    					trans_tmp <- IplusdA
+    				} else if (method_pt == "exp") {
+    					P <- P %*% survival:::survexpm(dA)
+    					trans_tmp <- survival:::survexpm(dA)
+    				}
                 if (variance) {
                     tmp1 <- kronecker(t(IplusdA),diag(S)) %*% varP %*% kronecker(IplusdA,diag(S))
                     tmp2 <- kronecker(diag(S),P) %*% vardA %*% kronecker(diag(S),t(P))
@@ -366,7 +372,7 @@
           }
         }
         if (direction=="forward") {
-            res[idx+1,1,] <- tt
+            res[idx+1,1,] <- res_trans[idx + 1, 1, ] <- tt 
             res[idx+1,2:(S+1),] <- t(P)
             if (variance) res[idx+1,(S+2):(2*S+1),] <- t(seP)
         }
@@ -376,17 +382,34 @@
             if (variance) res[idx,(S+2):(2*S+1),] <- t(seP)
         }
     }
+    for (j in 1:numtrans) {
+  			from <- transit$from[transit$transno == Haztt$trans[j]]
+  			to <- transit$to[transit$transno == Haztt$trans[j]]
+  			val_tmp <- trans_tmp[from, to]
+  			vals_tmp <- res[idx, from + 1, ]*val_tmp
+  			res_trans[idx + 1, j + 1, ] <- vals_tmp
+  		}
+  	}
     if (covariance & (direction=="fixedhorizon"))
       varParr[,,1] <- varParr[,,2]
     ### res[,,s] contains prediction from state s, convert to list of dataframes
-    res2  <- vector("list", S)
-    for (s in 1:S) {
-        tmp <- as.data.frame(res[,,s])
-        if (min(dim(tmp))==1) tmp <- res[,,s]
-        if (variance) names(tmp) <- c("time",paste("pstate",1:S,sep=""),paste("se",1:S,sep=""))
-        else names(tmp) <- c("time",paste("pstate",1:S,sep=""))
-        res2[[s]] <- tmp
-    }
+    res2 <- vector("list", S)
+  	for (s in 1:S) {
+  		tmp <- as.data.frame(res[, , s])
+  		tmp_res_trans <- as.data.frame(res_trans[, , s])
+  		if (min(dim(tmp)) == 1){ 
+  			tmp <- res[, , s]
+  			tmp_res_trans <- res_trans[, , s]
+  		}
+  		if (variance)
+  			names(tmp) <- c("time", paste("pstate", 1:S, sep = ""),
+  											paste("se", 1:S, sep = ""))
+  		else names(tmp) <- c("time", paste("pstate", 1:S, sep = ""))
+  		names(tmp_res_trans) <- c("time", paste("trans", 1:numtrans, sep = ""))
+  		res2[[s]][["state_probabilities"]] <- tmp
+  		res2[[s]][["transition_dynamics"]] <- tmp_res_trans
+  		
+  	}
     if (covariance) res2$varMatrix <- varParr
     
     # Calculate bootstrap se's for probtrans:
@@ -463,3 +486,4 @@
     class(res2) <- "probtrans"
     return(res2)
 }
+
