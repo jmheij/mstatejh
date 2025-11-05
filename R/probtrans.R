@@ -115,9 +115,6 @@
   	trans <- object$trans
   	transit <- to.trans2(trans)
   	numtrans <- nrow(transit)
-    trans <- object$trans
-    transit <- to.trans2(trans)
-    numtrans <- nrow(transit)
     variance_boot <- FALSE
     # Check if bootstrap replications are in the object:
     if("Haz.boot" %in% names(object)){
@@ -519,6 +516,7 @@
     class(res2) <- "probtrans"
     return(res2)
 }
+
 
 
 
