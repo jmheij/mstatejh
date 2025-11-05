@@ -256,7 +256,21 @@
         if (any(diag(IplusdA)<0) & method_pt=="prodlim")
             warning("Warning! Negative diagonal elements of (I+dA); the estimate may not be meaningful.
                     Set argument method_pt to 'exp'\n")
-        
+
+        if (method_pt == "exp") {
+    			# Build 2S x 2S block matrix [[dA, I], [0, 0]]
+    			B <- rbind(
+    				cbind(dA,           diag(S)),
+    				cbind(matrix(0, S, S), matrix(0, S, S))
+    			)
+    			EB <- survival:::survexpm(B)
+    			M_unit <- EB[1:S, (S + 1):(2 * S), drop = FALSE]  # M_unit = ∫_0^1 e^{s dA} ds
+    			# Note: For a slice of length Δ with generator Q (so dA = QΔ),
+    			# the occupancy-time integral is M(Δ) = Δ * M_unit, and Q = dA / Δ.
+    			# Expected edge counts matrix for start distribution π is:
+    			#   C = diag(π %*% M_unit) %*% dA
+    			# which yields C_{i->j} = (π M_unit)_i * dA_{ij}.
+    		}
         if (variance) {
             if (direction=="forward"){
                 varA <- varAnew
@@ -320,19 +334,8 @@
     					P <- P %*% IplusdA
     					trans_tmp <- IplusdA
     				} else if (method_pt == "exp") {
-    					P <- P %*% survival:::survexpm(dA)
-        			# prepare quantities needed for edge counts (Van Loan)
-    					# start-of-slice distributions (columns = start states)
-    					Pi_start_mat <- res[idx, 2:(S + 1), , drop = FALSE]
-    					# M = ∫_0^1 e^{u dA} du via Van Loan block exponential
-    					# Build 2S x 2S block matrix [dA  I; 0  dA]
-    					B <- rbind(cbind(dA, diag(S)),
-    										 cbind(matrix(0, S, S), dA))
-    					EB <- survival:::survexpm(B)
-    					Mslice <- EB[1:S, (S+1):(2*S)]
-    					# stash for use below
-    					trans_tmp <- list(Mslice = Mslice, Pi_start_mat = Pi_start_mat, dA = dA)
-    				}
+  					  P <- P %*% survival:::survexpm(dA)
+  				  }
                 if (variance) {
                     tmp1 <- kronecker(t(IplusdA),diag(S)) %*% varP %*% kronecker(IplusdA,diag(S))
                     tmp2 <- kronecker(diag(S),P) %*% vardA %*% kronecker(diag(S),t(P))
@@ -394,25 +397,28 @@
     
       # Fill transition_dynamics for this slice 
   		if (method_pt == "prodlim") {
-  			# unchanged: one-jump flows
   			for (j in 1:numtrans) {
-  				from <- transit$from[transit$transno == j]
-  				to   <- transit$to  [transit$transno == j]
-  				val_tmp  <- IplusdA[from, to]
-  				vals_tmp <- res[idx, from + 1, ] * val_tmp
+  				from <- transit$from[transit$transno == Haztt$trans[j]]
+  				to <- transit$to[transit$transno == Haztt$trans[j]]
+  				val_tmp <- trans_tmp[from, to]                      # probability of i->j in the slice
+  				vals_tmp <- res[idx, from + 1, ] * val_tmp          # vector over start states s
   				res_trans[idx + 1, j + 1, ] <- vals_tmp
   			}
   		} else if (method_pt == "exp") {
-  			# exact expected edge counts consistent with exp update
-  			Mslice <- trans_tmp$Mslice
-  			Pi_start_mat <- trans_tmp$Pi_start_mat
-  			dA_local <- trans_tmp$dA
-  			# sojourn time matrix for this slice: S x S (rows=current i, cols=start state)
-  			sojourn_mat <- t(Mslice) %*% Pi_start_mat
+  			# multi-jump-consistent edge counts using M_unit and dA
+  			# Grab the S x S matrix Π of start-of-slice occupancies: rows = current state i, cols = start state s
+  			# Collapse to an S x S matrix: rows = current state i, cols = start state s
+  			Pi_mat <- res[idx, 2:(S + 1), ]         # this drops the first dim and gives an SxS matrix
+  			Pi_mat <- as.matrix(Pi_mat)             
+  			
+  			# Expected time-in-state per start state (columns): r_s = M_unit^T * pi_s
+  			r_mat <- t(M_unit) %*% Pi_mat           # S x S
+  			
   			for (j in 1:numtrans) {
-  				from <- transit$from[transit$transno == j]
-  				to   <- transit$to  [transit$transno == j]
-  				vals_tmp <- sojourn_mat[from, ] * dA_local[from, to]
+  				from <- transit$from[transit$transno == Haztt$trans[j]]
+  				to <- transit$to[transit$transno == Haztt$trans[j]]
+  				# Edge counts for each start state s: r[from, s] * dA[from, to]
+  				vals_tmp <- r_mat[from, ] * dA[from, to]
   				res_trans[idx + 1, j + 1, ] <- vals_tmp
   			}
   		}
@@ -513,5 +519,6 @@
     class(res2) <- "probtrans"
     return(res2)
 }
+
 
 
