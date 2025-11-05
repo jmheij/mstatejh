@@ -321,7 +321,17 @@
     					trans_tmp <- IplusdA
     				} else if (method_pt == "exp") {
     					P <- P %*% survival:::survexpm(dA)
-    					trans_tmp <- survival:::survexpm(dA)
+        			# prepare quantities needed for edge counts (Van Loan)
+    					# start-of-slice distributions (columns = start states)
+    					Pi_start_mat <- res[idx, 2:(S + 1), , drop = FALSE]
+    					# M = ∫_0^1 e^{u dA} du via Van Loan block exponential
+    					# Build 2S x 2S block matrix [dA  I; 0  dA]
+    					B <- rbind(cbind(dA, diag(S)),
+    										 cbind(matrix(0, S, S), dA))
+    					EB <- survival:::survexpm(B)
+    					Mslice <- EB[1:S, (S+1):(2*S)]
+    					# stash for use below
+    					trans_tmp <- list(Mslice = Mslice, Pi_start_mat = Pi_start_mat, dA = dA)
     				}
                 if (variance) {
                     tmp1 <- kronecker(t(IplusdA),diag(S)) %*% varP %*% kronecker(IplusdA,diag(S))
@@ -381,13 +391,30 @@
             res[idx,2:(S+1),] <- t(P)
             if (variance) res[idx,(S+2):(2*S+1),] <- t(seP)
         }
-    }
-    for (j in 1:numtrans) {
-  			from <- transit$from[transit$transno == Haztt$trans[j]]
-  			to <- transit$to[transit$transno == Haztt$trans[j]]
-  			val_tmp <- trans_tmp[from, to]
-  			vals_tmp <- res[idx, from + 1, ]*val_tmp
-  			res_trans[idx + 1, j + 1, ] <- vals_tmp
+    
+      # Fill transition_dynamics for this slice 
+  		if (method_pt == "prodlim") {
+  			# unchanged: one-jump flows
+  			for (j in 1:numtrans) {
+  				from <- transit$from[transit$transno == j]
+  				to   <- transit$to  [transit$transno == j]
+  				val_tmp  <- IplusdA[from, to]
+  				vals_tmp <- res[idx, from + 1, ] * val_tmp
+  				res_trans[idx + 1, j + 1, ] <- vals_tmp
+  			}
+  		} else if (method_pt == "exp") {
+  			# exact expected edge counts consistent with exp update
+  			Mslice <- trans_tmp$Mslice
+  			Pi_start_mat <- trans_tmp$Pi_start_mat
+  			dA_local <- trans_tmp$dA
+  			# sojourn time matrix for this slice: S x S (rows=current i, cols=start state)
+  			sojourn_mat <- t(Mslice) %*% Pi_start_mat
+  			for (j in 1:numtrans) {
+  				from <- transit$from[transit$transno == j]
+  				to   <- transit$to  [transit$transno == j]
+  				vals_tmp <- sojourn_mat[from, ] * dA_local[from, to]
+  				res_trans[idx + 1, j + 1, ] <- vals_tmp
+  			}
   		}
   	}
     if (covariance & (direction=="fixedhorizon"))
@@ -486,4 +513,5 @@
     class(res2) <- "probtrans"
     return(res2)
 }
+
 
