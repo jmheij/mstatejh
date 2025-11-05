@@ -263,7 +263,7 @@
     				cbind(dA,           diag(S)),
     				cbind(matrix(0, S, S), matrix(0, S, S))
     			)
-    			EB <- survival:::survexpm(B)
+    			EB <- expm::expm(B) #important that here we use expm instead of survexpm.
     			M_unit <- EB[1:S, (S + 1):(2 * S), drop = FALSE]  # M_unit = ∫_0^1 e^{s dA} ds
     			# Note: For a slice of length Δ with generator Q (so dA = QΔ),
     			# the occupancy-time integral is M(Δ) = Δ * M_unit, and Q = dA / Δ.
@@ -519,6 +519,7 @@
     class(res2) <- "probtrans"
     return(res2)
 }
+
 
 
 
