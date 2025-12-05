@@ -103,7 +103,7 @@
 
 #' 
 #' @export 
-`probtrans` <- function(object, predt, direction = c("forward", "fixedhorizon"),
+`probtrans_fusion` <- function(object, predt, direction = c("forward", "fixedhorizon"),
                         method_pt = c("prodlim", "exp"), method = c("aalen", "greenwood"),
                         variance = TRUE, covariance = FALSE)
 {
@@ -153,8 +153,9 @@
     if (direction=="forward") {
         if (variance==TRUE) res <- array(0,c(TT+1,2*S+1,S)) # 2*S+1 for time, probs (S), se (S)
         else res <- array(0,c(TT+1,S+1,S)) # S+1 for time, probs (S)
+        res_trans <- array(0, c(TT + 1, numtrans + 1, S))
         # first line (in case of forward) contains values for t=predt
-        res[1,1,] <- predt
+        res[1,1,] <- res_trans[1, 1, ] <- predt
         for (j in 1:S) res[1, 1+j,] <- rep(c(0,1,0), c(j-1,1,S-j))
         if (variance) res[1,(S+2):(2*S+1),] <- 0
     }
@@ -253,7 +254,20 @@
         if (any(diag(IplusdA)<0) & method_pt=="prodlim")
             warning("Warning! Negative diagonal elements of (I+dA); the estimate may not be meaningful.
                     Set argument method_pt to 'exp'\n")
-        
+        if (method_pt == "exp") {
+    			# Build 2S x 2S block matrix [[dA, I], [0, 0]]
+    			B <- rbind(
+    				cbind(dA,           diag(S)),
+    				cbind(matrix(0, S, S), matrix(0, S, S))
+    			)
+    			EB <- expm::expm(B)  #important that this stays with expm and not survexpm.
+    			M_unit <- EB[1:S, (S + 1):(2 * S), drop = FALSE]  # M_unit = ∫_0^1 e^{s dA} ds
+    			# Note: For a slice of length Δ with generator Q (so dA = QΔ),
+    			# the occupancy-time integral is M(Δ) = Δ * M_unit, and Q = dA / Δ.
+    			# Expected edge counts matrix for start distribution π is:
+    			#   C = diag(π %*% M_unit) %*% dA
+    			# which yields C_{i->j} = (π M_unit)_i * dA_{ij}.
+    		}
         if (variance) {
             if (direction=="forward"){
                 varA <- varAnew
@@ -366,7 +380,7 @@
           }
         }
         if (direction=="forward") {
-            res[idx+1,1,] <- tt
+            res[idx + 1, 1, ] <- res_trans[idx + 1, 1, ] <- tt
             res[idx+1,2:(S+1),] <- t(P)
             if (variance) res[idx+1,(S+2):(2*S+1),] <- t(seP)
         }
@@ -375,6 +389,31 @@
             res[idx,2:(S+1),] <- t(P)
             if (variance) res[idx,(S+2):(2*S+1),] <- t(seP)
         }
+        if (method_pt == "prodlim") {
+    			for (k in 1:numtrans) {                           
+    				from <- transit$from[k]
+    				to   <- transit$to[k]
+    				val_tmp  <- trans_tmp[from, to]                 # prob of i->j in this slice
+    				vals_tmp <- res[idx, from + 1, ] * val_tmp
+    				res_trans[idx + 1, k + 1, ] <- vals_tmp         # write to the k-th transition column
+    			}
+    		} else if (method_pt == "exp") {
+    			# multi-jump-consistent edge counts using M_unit and dA
+    			# Grab the S x S matrix Π of start-of-slice occupancies: rows = current state i, cols = start state s
+    			# Collapse to an S x S matrix: rows = current state i, cols = start state s
+    			Pi_mat <- res[idx, 2:(S + 1), ]         # this drops the first dim and gives an SxS matrix
+    			Pi_mat <- as.matrix(Pi_mat)             
+    			
+    			# Expected time-in-state per start state (columns): r_s = M_unit^T * pi_s
+    			r_mat <- t(M_unit) %*% Pi_mat           # S x S
+    			
+    			for (k in 1:numtrans) {                           
+    				from <- transit$from[k]
+    				to   <- transit$to[k]
+    				vals_tmp <- r_mat[from, ] * dA[from, to]        # expected edge counts
+    				res_trans[idx + 1, k + 1, ] <- vals_tmp
+    			}
+    		}
     }
     if (covariance & (direction=="fixedhorizon"))
       varParr[,,1] <- varParr[,,2]
@@ -382,10 +421,18 @@
     res2  <- vector("list", S)
     for (s in 1:S) {
         tmp <- as.data.frame(res[,,s])
-        if (min(dim(tmp))==1) tmp <- res[,,s]
-        if (variance) names(tmp) <- c("time",paste("pstate",1:S,sep=""),paste("se",1:S,sep=""))
-        else names(tmp) <- c("time",paste("pstate",1:S,sep=""))
-        res2[[s]] <- tmp
+      	tmp_res_trans <- as.data.frame(res_trans[, , s])
+        if (min(dim(tmp)) == 1){ 
+    			tmp <- res[, , s]
+    			tmp_res_trans <- res_trans[, , s]
+    		}
+        if (variance)
+    			names(tmp) <- c("time", paste("pstate", 1:S, sep = ""),
+    											paste("se", 1:S, sep = ""))
+    		else names(tmp) <- c("time", paste("pstate", 1:S, sep = ""))
+    		names(tmp_res_trans) <- c("time", paste("trans", 1:numtrans, sep = ""))
+    		res2[[s]][["state_probabilities"]] <- tmp
+    		res2[[s]][["transition_dynamics"]] <- tmp_res_trans
     }
     if (covariance) res2$varMatrix <- varParr
     
